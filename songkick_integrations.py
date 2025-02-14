@@ -1,5 +1,7 @@
+import re
+from typing import Optional
 from fastapi import HTTPException
-from models.models import TrackUntrackLocationRequest
+from submodule_integrations.songkick.models.models import TrackUntrackLocationRequest
 from submodule_integrations.models.integration import Integration
 from fake_useragent import UserAgent
 import requests
@@ -257,11 +259,15 @@ class SongkickIntegration(Integration):
             )
             return {"status": "failed"}
 
-    async def get_events(self):
+    async def get_events(self, page: int | None = None):
         logger.debug("Fetching all events for user")
         get_tracked_artists_url = (
             "https://www.songkick.com/calendar?filter=tracked_artist"
         )
+
+        if page:
+            get_tracked_artists_url += f"&page={page}"
+
         get_tracked_artists_response = self.session.get(
             get_tracked_artists_url,
             headers={
@@ -330,11 +336,44 @@ class SongkickIntegration(Integration):
                 }
             )
 
-        logger.debug("Parsing html body for event information started")
+        logger.debug("Parsing html body for event information ended")
 
-        return {"events": events}
+        current_page = page if page else 1
+        next_page, prev_page = None, None
 
-    def get_event_details(self, event_url):
+        # Pagination Handling
+        if len(events) > 0:
+            pagination = soup.select_one(".pagination")
+
+            if pagination:
+                current_page_elem = pagination.select_one(".current")
+                if current_page_elem:
+                    current_page = int(current_page_elem.text.strip())
+
+                next_page_elem = pagination.select_one(".next_page")
+                if next_page_elem and "href" in next_page_elem.attrs:
+                    next_page_match = re.search(r"page=(\d+)", next_page_elem["href"])
+                    if next_page_match:
+                        next_page = int(next_page_match.group(1))
+
+                prev_page_elem = pagination.select_one(".previous_page:not(.disabled)")
+                if prev_page_elem and "href" in prev_page_elem.attrs:
+                    prev_page_match = re.search(r"page=(\d+)", prev_page_elem["href"])
+                    if prev_page_match:
+                        prev_page = int(prev_page_match.group(1))
+
+        return {
+            "events": events,
+            "pagination": {
+                "current_page": current_page,
+                "next_page": next_page,
+                "previous_page": prev_page,
+                "has_next": next_page is not None,
+                "has_previous": prev_page is not None,
+            },
+        }
+
+    async def get_event_details(self, event_url):
         logger.debug("Fetching event details")
         get_event_response = self.session.get(
             event_url, headers={"Cookie": self.cookies}
