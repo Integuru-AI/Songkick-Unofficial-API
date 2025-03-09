@@ -1,6 +1,6 @@
 import re
-from typing import Optional
 from fastapi import HTTPException
+from helpers.classes.network_requester import NetworkRequester
 from submodule_integrations.songkick.models.models import TrackUntrackLocationRequest
 from submodule_integrations.models.integration import Integration
 from fake_useragent import UserAgent
@@ -19,9 +19,8 @@ class SongkickIntegration(Integration):
     def __init__(self, user_agent: str = UserAgent().random):
         super().__init__("songkick")
         self.user_agent = user_agent
-        self.network_requester = None
+        self.network_requester: NetworkRequester = None
         self.url = "https://www.songkick.com"
-        self.session = requests.Session()
         self.cookies = None
 
     @classmethod
@@ -56,12 +55,22 @@ class SongkickIntegration(Integration):
             * The response object from the request.
         """
         if self.network_requester:
-            response = self.network_requester.request(method, url, **kwargs)
+            response = await self.network_requester.request(method, url, **kwargs)
             return response
         else:
             async with aiohttp.ClientSession() as session:
                 async with session.request(method, url, **kwargs) as response:
                     return await self._handle_response(response)
+
+    @staticmethod                
+    async def process_html(html_response):
+        response_body = await html_response.text()
+        logger.debug("Attempting to process html into soup")
+        soup = BeautifulSoup(response_body, "html.parser")
+        return {
+            "status_code": html_response.status,
+            "body": soup
+        }
 
     async def _handle_response(self, response: aiohttp.ClientResponse):
         """
@@ -148,7 +157,7 @@ class SongkickIntegration(Integration):
             * dict: A dictionary containing the response data under the given key.
         """
         headers = await self._setup_headers()
-        response: Response = await self._make_request(method, url, headers=headers)
+        response: Response = await self._make_request(method, url, headers=headers, process_response=self.process_html)
         return {response_key: response}
 
     async def search_location(self, location_name: str):
@@ -157,18 +166,19 @@ class SongkickIntegration(Integration):
 
         logger.debug(f"Visiting locations url: {get_locations_url}")
 
-        locations_response = self.session.get(
-            get_locations_url, headers={"Cookie": self.cookies}
+        locations_response = await self.generic_make_request(
+            "GET",
+            get_locations_url,
+            "locations"
         )
-        locations_response.raise_for_status()
 
-        if "Sorry, we found no results for" in locations_response.text:
+        if "Sorry, we found no results for" in locations_response["locations"]['body'].prettify():
             logger.debug(f"No results found for {location_name}")
             raise HTTPException(
                 status_code=404, detail=f"No results found for {location_name}"
             )
 
-        soup = BeautifulSoup(locations_response.text, "html.parser")
+        soup = locations_response["locations"]['body']
 
         search_results = []
         logger.debug("Parsing locations html body started")
@@ -235,24 +245,17 @@ class SongkickIntegration(Integration):
             "success_url": request.success_url,
         }
 
-        trackings_response = self.session.post(
+        trackings_response = self._make_request(
+            "POST",
             trackings_url,
-            data=trackings_form,
-            headers={
-                "Cookie": self.cookies,
-            },
+            data=trackings_form
         )
         try:
-            trackings_response.raise_for_status()
             if (
-                trackings_response.status_code == 200
-                and not '"status":"ok"' in trackings_response.text
+                not '"status":"ok"' in trackings_response
             ):
-                return {"status": "ok"}
-            if trackings_response.status_code != 200:
-                return {"status": "failed"}
-            trackings_response_json = trackings_response.json()
-            return trackings_response_json
+                return {"status": "Failed"}
+            return trackings_response
         except Exception as exc:
             logger.debug(
                 f"An error occured while attempting to track location({request.subject_id}):  {str(exc)}"
@@ -268,26 +271,24 @@ class SongkickIntegration(Integration):
         if page:
             get_tracked_artists_url += f"&page={page}"
 
-        get_tracked_artists_response = self.session.get(
+        get_tracked_artists_response: dict[str, BeautifulSoup] = await self.generic_make_request(
+            "GET",
             get_tracked_artists_url,
-            headers={
-                "Cookie": self.cookies,
-            },
+            "artists"
         )
-        get_tracked_artists_response.raise_for_status()
 
         if (
-            get_tracked_artists_response.status_code != 200
+            get_tracked_artists_response['artists']['status_code'] != 200
             and not "All upcoming concerts from the artists you’re tracking."
-            in get_tracked_artists_response.text
+            in get_tracked_artists_response['artists']['body'].prettify()
         ):
             logger.debug("Failed to fetch concert events")
             raise HTTPException(
-                status_code=get_tracked_artists_response.status_code,
+                status_code=get_tracked_artists_response['artists']['status_code'],
                 detail="Failed to fetch concert events",
             )
 
-        soup = BeautifulSoup(get_tracked_artists_response.text, "html.parser")
+        soup = get_tracked_artists_response['artists']['body']
 
         events = []
 
@@ -375,12 +376,13 @@ class SongkickIntegration(Integration):
 
     async def get_event_details(self, event_url):
         logger.debug("Fetching event details")
-        get_event_response = self.session.get(
-            event_url, headers={"Cookie": self.cookies}
+        get_event_response = await self.generic_make_request(
+            "GET",
+            event_url,
+            "event"
         )
-        get_event_response.raise_for_status()
 
-        soup = BeautifulSoup(get_event_response.text, "html.parser")
+        soup = get_event_response["event"]["body"]
 
         date_time = (
             soup.select_one(".date-and-name p").text.strip()
