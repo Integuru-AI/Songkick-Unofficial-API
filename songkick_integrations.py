@@ -62,15 +62,12 @@ class SongkickIntegration(Integration):
                 async with session.request(method, url, **kwargs) as response:
                     return await self._handle_response(response)
 
-    @staticmethod                
+    @staticmethod
     async def process_html(html_response):
         response_body = await html_response.text()
         logger.debug("Attempting to process html into soup")
         soup = BeautifulSoup(response_body, "html.parser")
-        return {
-            "status_code": html_response.status,
-            "body": soup
-        }
+        return {"status_code": html_response.status, "body": soup}
 
     async def _handle_response(self, response: aiohttp.ClientResponse):
         """
@@ -157,7 +154,9 @@ class SongkickIntegration(Integration):
             * dict: A dictionary containing the response data under the given key.
         """
         headers = await self._setup_headers()
-        response: Response = await self._make_request(method, url, headers=headers, process_response=self.process_html)
+        response: Response = await self._make_request(
+            method, url, headers=headers, process_response=self.process_html
+        )
         return {response_key: response}
 
     async def search_location(self, location_name: str):
@@ -167,18 +166,19 @@ class SongkickIntegration(Integration):
         logger.debug(f"Visiting locations url: {get_locations_url}")
 
         locations_response = await self.generic_make_request(
-            "GET",
-            get_locations_url,
-            "locations"
+            "GET", get_locations_url, "locations"
         )
 
-        if "Sorry, we found no results for" in locations_response["locations"]['body'].prettify():
+        if (
+            "Sorry, we found no results for"
+            in locations_response["locations"]["body"].prettify()
+        ):
             logger.debug(f"No results found for {location_name}")
             raise HTTPException(
                 status_code=404, detail=f"No results found for {location_name}"
             )
 
-        soup = locations_response["locations"]['body']
+        soup = locations_response["locations"]["body"]
 
         search_results = []
         logger.debug("Parsing locations html body started")
@@ -246,14 +246,10 @@ class SongkickIntegration(Integration):
         }
 
         trackings_response = self._make_request(
-            "POST",
-            trackings_url,
-            data=trackings_form
+            "POST", trackings_url, data=trackings_form
         )
         try:
-            if (
-                not '"status":"ok"' in trackings_response
-            ):
+            if not '"status":"ok"' in trackings_response:
                 return {"status": "Failed"}
             return trackings_response
         except Exception as exc:
@@ -271,24 +267,22 @@ class SongkickIntegration(Integration):
         if page:
             get_tracked_artists_url += f"&page={page}"
 
-        get_tracked_artists_response: dict[str, BeautifulSoup] = await self.generic_make_request(
-            "GET",
-            get_tracked_artists_url,
-            "artists"
+        get_tracked_artists_response: dict[str, BeautifulSoup] = (
+            await self.generic_make_request("GET", get_tracked_artists_url, "artists")
         )
 
         if (
-            get_tracked_artists_response['artists']['status_code'] != 200
+            get_tracked_artists_response["artists"]["status_code"] != 200
             and not "All upcoming concerts from the artists you’re tracking."
-            in get_tracked_artists_response['artists']['body'].prettify()
+            in get_tracked_artists_response["artists"]["body"].prettify()
         ):
             logger.debug("Failed to fetch concert events")
             raise HTTPException(
-                status_code=get_tracked_artists_response['artists']['status_code'],
+                status_code=get_tracked_artists_response["artists"]["status_code"],
                 detail="Failed to fetch concert events",
             )
 
-        soup = get_tracked_artists_response['artists']['body']
+        soup = get_tracked_artists_response["artists"]["body"]
 
         events = []
 
@@ -299,18 +293,17 @@ class SongkickIntegration(Integration):
             artist_tag = event.find("p", class_="artists summary")
             artist_name = artist_tag.find("strong").text if artist_tag else None
             venue_tag = event.find("p", class_="location")
-            venue_name = (
-                venue_tag.find("span", class_="venue-name").text.strip()
-                if venue_tag
-                else None
+            venue_name_tag = (
+                venue_tag.find("span", class_="venue-name") if venue_tag else None
             )
-            city_state = (
-                venue_tag.find_all("span")[1].text.strip() if venue_tag else None
+            venue_name = venue_name_tag.text.strip() if venue_name_tag else None
+            city_state_tag = venue_tag.find_all("span")[1] if venue_tag else None
+            city_state = city_state_tag.text.strip() if city_state_tag else None
+            street_address_tag = (
+                venue_tag.find("span", class_="street-address") if venue_tag else None
             )
             street_address = (
-                venue_tag.find("span", class_="street-address").text.strip()
-                if venue_tag and venue_tag.find("span", class_="street-address")
-                else None
+                street_address_tag.text.strip() if street_address_tag else None
             )
             event_url = event.find("a")["href"] if event.find("a") else None
             image_url = event.find("img")["src"] if event.find("img") else None
@@ -376,11 +369,7 @@ class SongkickIntegration(Integration):
 
     async def get_event_details(self, event_url):
         logger.debug("Fetching event details")
-        get_event_response = await self.generic_make_request(
-            "GET",
-            event_url,
-            "event"
-        )
+        get_event_response = await self.generic_make_request("GET", event_url, "event")
 
         soup = get_event_response["event"]["body"]
 
