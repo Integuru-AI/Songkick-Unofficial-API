@@ -1,6 +1,6 @@
 import re
 from fastapi import HTTPException
-from helpers.classes.network_requester import NetworkRequester
+from helpers.network.network_requester import NetworkRequester
 from submodule_integrations.songkick.models.models import TrackUntrackLocationRequest
 from submodule_integrations.models.integration import Integration
 from fake_useragent import UserAgent
