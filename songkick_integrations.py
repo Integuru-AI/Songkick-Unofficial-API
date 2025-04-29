@@ -1,6 +1,5 @@
 import re
 from fastapi import HTTPException
-from helpers.network.network_requester import NetworkRequester
 from submodule_integrations.songkick.models.models import TrackUntrackLocationRequest
 from submodule_integrations.models.integration import Integration
 from fake_useragent import UserAgent
@@ -19,7 +18,7 @@ class SongkickIntegration(Integration):
     def __init__(self, user_agent: str = UserAgent().random):
         super().__init__("songkick")
         self.user_agent = user_agent
-        self.network_requester: NetworkRequester = None
+        self.network_requester = None
         self.url = "https://www.songkick.com"
         self.cookies = None
 
